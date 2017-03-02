@@ -3,21 +3,32 @@ library(glmnet)
 library(cvTools)
 
 options(warn=-1)
+
+#Set personal working directory
 setwd('/Users/nicoleferraro/Documents/Stanford/Winter_1617/BMI217/Project/PredictionAddiction/')
 
+#Assumes data files are stored in CCLE folder, one directory up, change accordingly
 cell_line_data = fread('../CCLE/CCLE_sample_info_file_2012-10-18.txt', header=T)
 drug_data = fread('../CCLE/CCLE_NP24.2009_Drug_data_2015.02.24.csv', header=T)
 gen_data = fread('CCLE_data_format_mutation.txt', header=T)
+
+#Split data and feature names
 gen_cell_data = gen_data[,3:ncol(gen_data)]
 gen_ft_data = gen_data[,1:2]
 drugs = unlist(unique(drug_data[,3]))
 genes = unlist(unique(gen_data[,1]))
+
+#Extract cell lines with data in both drug files and feature files
 cell_lines = intersect(unlist(unique(drug_data[,1])), unlist(colnames(gen_cell_data)))
 cinds = which(unlist(cell_line_data[,1]) %in% cell_lines)
 pred_data_cells = cell_line_data[cinds,]
 dinds = which(unlist(drug_data[,1]) %in% cell_lines)
 drug_data_cells = drug_data[dinds, ]
 
+#Fit an elastic net regression model for each drug
+#Use lambda with smallest MSE, determined via cross-validation
+#Conduct 10-fold cross validation to obtain R^2 for the predicted drug activity area vs. known
+#All files are written to current working directory
 all_r2s = c()
 for (drug in drugs) {
   dinds = which(drug_data_cells[,3] == drug)
