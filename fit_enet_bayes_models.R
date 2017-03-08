@@ -1,6 +1,8 @@
 library(data.table)
+library(e1071)
 library(glmnet)
 library(cvTools)
+library(ROCR)
 
 options(warn=-1)
 
@@ -38,11 +40,14 @@ for (drug in drugs) {
   colnames(pred_data) = cell_labels
   pred_data = pred_data[-1,]
   ginds = which(colnames(gen_cell_data) %in% cell_labels)
-  gen_drug_data = as.data.frame(gen_cell_data)[,ginds]
+  gen_data = as.data.frame(gen_cell_data)[,ginds]
+  #Normalize data via z-score
+  gen_drug_data = scale(gen_data, center=TRUE, scale=TRUE)
   pred_num_data = apply(pred_data, 1, function(x) as.numeric(x))
   flds = cvFolds(ncol(gen_drug_data), K=10)
   tot_r2 = 0
   all_coefs = gen_ft_data
+  #For computational efficiency, only include features with r > 0.1 with outcome
   cors = apply(gen_drug_data, 1, function(x) cor(as.numeric(x), pred_num_data))
   kinds = which(cors > 0.1)
   gen_drug_data_keep = gen_drug_data[kinds,]
@@ -60,13 +65,61 @@ for (drug in drugs) {
     all_coefs = cbind(all_coefs, betas)
     pred = predict(fit, t(data.matrix(gen_test)), s="lambda.min")
     r = cor(pred, pred_test, method='pearson')
+    r2 = paste("R^2= ", round(r^2,3), sep='')
+    r = cor(pred, pred_test, method='pearson')
     tot_r2 = tot_r2 + r^2
   }
-  out_file = paste(drug, '_with_mutations.txt', sep='')
+  out_file = paste(drug, '_with_mutations_scale.txt', sep='')
   write.table(all_coefs, out_file, sep='\t', row.names=F)
   all_r2s = c(all_r2s, tot_r2/10)
 }
 
 pred_outcomes = cbind(drugs, all_r2s)
-write.table(pred_outcomes, 'drug_r2_with_mutations.txt', sep='\t', row.names=F, col.names=F)
+write.table(pred_outcomes, 'drug_r2_with_mutations_scale.txt', sep='\t', row.names=F, col.names=F)
 
+#Fit a naive bayes classifier for each drug
+#Thresholding is based on the median sensitivity value
+for (drug in drugs) {
+  dinds = which(drug_data_cells[,3] == drug)
+  cell_labels = unlist(drug_data_cells[dinds,1])
+  act_areas = unlist(drug_data_cells[dinds,13])
+  pred_data = as.data.frame(rbind(cell_labels, act_areas))
+  colnames(pred_data) = cell_labels
+  pred_data = pred_data[-1,]
+  #Threshold sensitivity based on the median value
+  med = median(as.numeric((as.matrix(pred_data))))
+  ginds = which(as.matrix(pred_data) >= med)
+  linds = which(as.matrix(pred_data) < med)
+  pred_data[ginds] = 1
+  pred_data[linds] = 0
+  pred_data = as.numeric(as.character(unlist(pred_data)))
+  ginds = which(colnames(gen_cell_data) %in% cell_labels)
+  gen_data = as.data.frame(gen_cell_data)[,ginds]
+  #Normalize data via z-score
+  gen_drug_data = scale(gen_data, center=TRUE, scale=TRUE)
+  flds = cvFolds(ncol(gen_drug_data), K=10)
+  #For computational efficiency, only include features with r > 0.1 with outcome
+  cors = apply(gen_drug_data, 1, function(x) cor(as.numeric(x), pred_data))
+  kinds = which(cors > 0.1)
+  gen_drug_data_keep = gen_drug_data[kinds,]
+  overall_pred = c()
+  overall_pred_test = c()
+  for (i in 1:10) {
+    train_inds <- flds$subsets[flds$which != i]
+    test_inds <- flds$subsets[flds$which == i]
+    pred_train = pred_data[train_inds]
+    gen_train = gen_drug_data_keep[,train_inds]
+    pred_test = pred_data[test_inds]
+    gen_test = gen_drug_data_keep[,test_inds]
+    fit = naiveBayes((t(data.matrix(gen_train))), as.vector(pred_train))
+    pred = predict(fit, t(data.matrix(gen_test)), type='raw')
+    overall_pred = c(overall_pred, pred[,2])
+    overall_pred_test = c(overall_pred_test, pred_test)
+  }
+  pr <- prediction(overall_pred, overall_pred_test)
+  prf <- performance(pr, "tpr", "fpr")
+  #Uncomment below line to see ROC plot for each drug
+  #plot(prf, main=drug, cex.lab=1.4, cex.main=2)
+  auc.perf = performance(pr, measure = 'auc')
+  write.table(c(drug, auc.perf@y.values), file='drug_auc.txt', sep='\t', row.names=F, col.names=F, append=T)
+}
