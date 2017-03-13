@@ -20,6 +20,12 @@ ccle_genes = unlist(unique(gen_data[,1]))
 overlap_genes = intersect(gene_list, ccle_genes)
 oinds = which(ccle_genes %in% overlap_genes)
 gen_data = gen_data[oinds,]
+#set if using validation set with only expression and CNV data
+validate = T
+if (validate == T) {
+  kinds = which(gen_data[,'Type'] == 'Expression' | gen_data[, 'Type'] == 'CNV')
+  gen_data = gen_data[kinds,]
+}
 
 #Split data and feature names
 gen_cell_data = gen_data[,3:ncol(gen_data)]
@@ -40,11 +46,11 @@ drug_data_cells = drug_data[dinds, ]
 #All files are written to current working directory
 all_r2s = matrix(c(rep(0,10*24)), nrow=24, ncol=10)
 rownames(all_r2s) = drugs
-#Train using cross-validation, or train on entire dataset
-cross = T
+#Train using cross-validation, or train on entire dataset (set to F if validating on external dataset)
+cross = F
 overlap_drugs = c("Nilotinib", "Erlotinib", "PHA-665752", "Paclitaxel", "Sorafenib", "Lapatinib")
 model_list = list()
-for (drug in drugs) {
+for (drug in overlap_drugs) {
   dinds = which(drug_data_cells[,3] == drug)
   cell_labels = unlist(drug_data_cells[dinds,1])
   act_areas = unlist(drug_data_cells[dinds,13])
@@ -67,6 +73,10 @@ for (drug in drugs) {
     coefs = coef(fit, s="lambda.min")
     betas[coefs@i] = coefs@x
     fit_out = cbind(gen_ft_data_keep, betas)
+    #INSERT HERE - Use predict(fit, INPUTDATA) to generate predictions
+    #Should be of format rows as features, columns as samples
+    #Refer to above for data structure, should be data.matrix
+    #Make sure input features are ordered as in original file used to train
     out_file = paste(drug, '_betas.txt')
     write.table(fit_out, file=out_file, sep='\t', row.names=F, col.names=F)
     #Save models for validation step
@@ -125,29 +135,43 @@ for (drug in drugs) {
   gen_data = as.data.frame(gen_cell_data)[,ginds]
   #Normalize data via z-score
   gen_drug_data = scale(gen_data, center=TRUE, scale=TRUE)
-  flds = cvFolds(ncol(gen_drug_data), K=10)
-  #For computational efficiency, only include features with r > 0.1 with outcome
-  cors = apply(gen_drug_data, 1, function(x) cor(as.numeric(x), pred_data))
-  kinds = which(cors > 0.1)
-  gen_drug_data_keep = gen_drug_data[kinds,]
-  overall_pred = c()
-  overall_pred_test = c()
-  for (i in 1:10) {
-    train_inds <- flds$subsets[flds$which != i]
-    test_inds <- flds$subsets[flds$which == i]
-    pred_train = pred_data[train_inds]
-    gen_train = gen_drug_data_keep[,train_inds]
-    pred_test = pred_data[test_inds]
-    gen_test = gen_drug_data_keep[,test_inds]
-    fit = naiveBayes((t(data.matrix(gen_train))), as.vector(pred_train))
+  if (cross == F) {
+    fit = naiveBayes((t(data.matrix(gen_drug_data_keep))), as.vector(pred_data))
+    #REPLACE gen_test with new validation set data
     pred = predict(fit, t(data.matrix(gen_test)), type='raw')
-    overall_pred = c(overall_pred, pred[,2])
-    overall_pred_test = c(overall_pred_test, pred_test)
+    #REPLACE pred_test with actual known sensitivity data
+    pr <- prediction(pred, pred_test)
+    prf <- performance(pr, "tpr", "fpr")
+    #Uncomment below line to see ROC plot for each drug
+    #plot(prf, main=drug, cex.lab=1.4, cex.main=2)
+    auc.perf = performance(pr, measure = 'auc')
+    #WRITE OR PRINT out auc metric however you prefer to extract
   }
-  pr <- prediction(overall_pred, overall_pred_test)
-  prf <- performance(pr, "tpr", "fpr")
-  #Uncomment below line to see ROC plot for each drug
-  #plot(prf, main=drug, cex.lab=1.4, cex.main=2)
-  auc.perf = performance(pr, measure = 'auc')
-  write.table(c(drug, auc.perf@y.values), file='drug_auc.txt', sep='\t', row.names=F, col.names=F, append=T)
+  else {
+    flds = cvFolds(ncol(gen_drug_data), K=10)
+    #For computational efficiency, only include features with r > 0.1 with outcome
+    cors = apply(gen_drug_data, 1, function(x) cor(as.numeric(x), pred_data))
+    kinds = which(cors > 0.1)
+    gen_drug_data_keep = gen_drug_data[kinds,]
+    overall_pred = c()
+    overall_pred_test = c()
+    for (i in 1:10) {
+      train_inds <- flds$subsets[flds$which != i]
+      test_inds <- flds$subsets[flds$which == i]
+      pred_train = pred_data[train_inds]
+      gen_train = gen_drug_data_keep[,train_inds]
+      pred_test = pred_data[test_inds]
+      gen_test = gen_drug_data_keep[,test_inds]
+      fit = naiveBayes((t(data.matrix(gen_train))), as.vector(pred_train))
+      pred = predict(fit, t(data.matrix(gen_test)), type='raw')
+      overall_pred = c(overall_pred, pred[,2])
+      overall_pred_test = c(overall_pred_test, pred_test)
+    }
+    pr <- prediction(overall_pred, overall_pred_test)
+    prf <- performance(pr, "tpr", "fpr")
+    #Uncomment below line to see ROC plot for each drug
+    #plot(prf, main=drug, cex.lab=1.4, cex.main=2)
+    auc.perf = performance(pr, measure = 'auc')
+    write.table(c(drug, auc.perf@y.values), file='drug_auc.txt', sep='\t', row.names=F, col.names=F, append=T)
+  }
 }
