@@ -1,19 +1,23 @@
+#AUTHOR: Nicole Ferraro
+#BMI 217 Project, Winter 2016-2017
+#PURPOSE: Fit an elastic net and naive bayes model to data from CCLE and cross-validate
+#Must have below libraries pre-installed
+
 library(data.table)
 library(e1071)
 library(glmnet)
 library(cvTools)
 library(ROCR)
 
-options(warn=-1)
-
 #Set personal working directory
 setwd('/Users/nicoleferraro/Documents/Stanford/Winter_1617/BMI217/Project/PredictionAddiction/')
-#Read in genes from validation set
+#Read in genes from validation set (extracted from TCGA data elsewhere)
 gene_list = readRDS('TCGA-Gene-Set')
 
 #Assumes data files are stored in CCLE folder, one directory up, change accordingly
 cell_line_data = fread('../CCLE/CCLE_sample_info_file_2012-10-18.txt', header=T)
 drug_data = fread('../CCLE/CCLE_NP24.2009_Drug_data_2015.02.24.csv', header=T)
+#Feature data created from the arrange_data.py script, change file if using different feature input set
 gen_data = fread('CCLE_data_format_mutation.txt', header=T)
 ccle_genes = unlist(unique(gen_data[,1]))
 #Subset to genes existing in both training and test sets for validation
@@ -48,9 +52,11 @@ all_r2s = matrix(c(rep(0,10*24)), nrow=24, ncol=10)
 rownames(all_r2s) = drugs
 #Train using cross-validation, or train on entire dataset (set to F if validating on external dataset)
 cross = F
-overlap_drugs = c("Nilotinib", "Erlotinib", "PHA-665752", "Paclitaxel", "Sorafenib", "Lapatinib")
+#Only look at subset of drugs if using external test set
+overlap = F
+if (overlap == T) { drugs = c("Nilotinib", "Erlotinib", "PHA-665752", "Paclitaxel", "Sorafenib", "Lapatinib") }
 model_list = list()
-for (drug in overlap_drugs) {
+for (drug in drugs) {
   dinds = which(drug_data_cells[,3] == drug)
   cell_labels = unlist(drug_data_cells[dinds,1])
   act_areas = unlist(drug_data_cells[dinds,13])
@@ -73,10 +79,6 @@ for (drug in overlap_drugs) {
     coefs = coef(fit, s="lambda.min")
     betas[coefs@i] = coefs@x
     fit_out = cbind(gen_ft_data_keep, betas)
-    #INSERT HERE - Use predict(fit, INPUTDATA) to generate predictions
-    #Should be of format rows as features, columns as samples
-    #Refer to above for data structure, should be data.matrix
-    #Make sure input features are ordered as in original file used to train
     out_file = paste(drug, '_betas.txt')
     write.table(fit_out, file=out_file, sep='\t', row.names=F, col.names=F)
     #Save models for validation step
@@ -85,6 +87,7 @@ for (drug in overlap_drugs) {
   else {
     flds = cvFolds(ncol(gen_drug_data_keep), K=10)
     all_coefs = gen_ft_data_keep
+    #Ten iterations of ten fold cross-validation
     for (j in 1:10) {
       tot_r2 = 0
       for (i in 1:10) {
@@ -137,15 +140,13 @@ for (drug in drugs) {
   gen_drug_data = scale(gen_data, center=TRUE, scale=TRUE)
   if (cross == F) {
     fit = naiveBayes((t(data.matrix(gen_drug_data_keep))), as.vector(pred_data))
-    #REPLACE gen_test with new validation set data
     pred = predict(fit, t(data.matrix(gen_test)), type='raw')
-    #REPLACE pred_test with actual known sensitivity data
     pr <- prediction(pred, pred_test)
     prf <- performance(pr, "tpr", "fpr")
     #Uncomment below line to see ROC plot for each drug
     #plot(prf, main=drug, cex.lab=1.4, cex.main=2)
     auc.perf = performance(pr, measure = 'auc')
-    #WRITE OR PRINT out auc metric however you prefer to extract
+    write.table(c(drug, auc.perf@y.values), file='drug_auc_testset.txt', sep='\t', row.names=F, col.names=F, append=T)
   }
   else {
     flds = cvFolds(ncol(gen_drug_data), K=10)

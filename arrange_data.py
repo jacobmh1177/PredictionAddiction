@@ -1,16 +1,23 @@
 #!/usr/bin/env python
 
+#AUTHOR: Nicole Ferraro
+#BMI 217 Project, Winter 2016-2017
+#PURPOSE: Concatenate various data types from downloaded files from the CCLE site into one input file for use as training in downstream models
+#No normalization is done in this script, done with model training
+
 import csv
 import numpy as np
 import pandas as pd
 import time
 
+#Assumes data exists one folder up in directory called CCLE, change as needed
 exp_data = pd.read_csv('../CCLE/CCLE_Expression_Entrez_2012-10-18.res', sep='\t', index_col=False)
         
 cnv_data = pd.read_csv('../CCLE/CCLE_copynumber_byGene_2013-12-03.txt', sep='\t')
 mut_data = pd.read_csv('../CCLE/CCLE_hybrid_capture1650_hg19_NoCommonSNPs_NoNeutralVariants_CDS_2012.05.07.maf', sep='\t', index_col=False)
 drug_data = pd.read_csv('../CCLE/CCLE_NP24.2009_Drug_data_2015.02.24.csv', sep=',')
 
+#Only extract genes with both expression and CNV data, and shared cell lines
 genes1 = cnv_data['SYMBOL'].unique().tolist()
 genes2 = exp_data['Description'].unique().tolist()
 overlap_genes = set(genes1).intersection(genes2)
@@ -21,9 +28,9 @@ new_cols = cells.tolist().insert(0,'Gene')
 
 #Sort each file by cell line (treat as samples)
 #Get overlap of cell lines
-#Combine data where row is gene, repeated three times, to get above three types of data
+#Combine data where row is gene, repeated 2-6 times, to get above three types of data (three types of mutation data)
 #Across all cell lines (columns)
-#Long run time
+#Long run time (~ 1 hr)
 
 start = True
 for gene in overlap_genes:
@@ -76,7 +83,7 @@ for gene in overlap_genes:
             mut.append(mutLOF)
             mut_nn.append(nnMS)
             mut_utr.append(utr)
-    #Write out new data row by row
+    #Write out new data in current directory row by row
     with open('CCLE_data_format_mutation.txt', 'a') as f:
       writer = csv.writer(f, delimiter='\t')
       if start == True:
